@@ -24,6 +24,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+include_recipe 'machine.workstation.etki.me::drivers'
 include_recipe 'machine.workstation.etki.me::setup'
 include_recipe 'machine.workstation.etki.me::maintenance'
 include_recipe 'machine.workstation.etki.me::utility'
