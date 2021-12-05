@@ -1,0 +1,195 @@
+#!/usr/bin/env ruby
+
+require 'pathname'
+require 'io/console'
+require 'mixlib/shellout'
+
+# @type [Array<String>]
+TARGETS = %w[machine profile].map { |target| "#{target}.workstation.etki.me" }.freeze
+
+# @type [Pathname]
+PROJECT_DIRECTORY = Pathname(__FILE__).realpath.parent.parent
+
+class Cookbook
+  # @!attribute
+  #   @return [Pathname]
+  attr_reader :location
+  # @!attribute
+  #   @return [Boolean]
+  attr_reader :privileged
+
+  def initialize(location, privileged = false)
+    @location = location
+    @privileged = privileged
+  end
+
+  def id
+    location.basename
+  end
+
+  # @param [String] prefix
+  # @return [Boolean]
+  def matches(prefix)
+    id.to_s.start_with?(prefix)
+  end
+
+  def policy
+    location.join('Policyfile.rb')
+  end
+
+  def install(**overrides)
+    puts "Install cookbook #{id}: About to start"
+    command!(:chef, :install, policy, *overrides)
+    puts "Install cookbook #{id}: Done"
+  end
+
+  def export(to, **overrides)
+    puts "Export cookbook #{id} to #{to}: About to start"
+    command!(:chef, :export, :'-f', policy, to, **overrides)
+    puts "Export cookbook #{id} to #{to}: Done"
+  end
+
+  def converge(from, **overrides)
+    puts "Converge cookbook #{id} from #{from}: About to start"
+    options = overrides.dup
+    options[:cwd] = from
+    arguments = [:'chef-client', :'-z']
+    if privileged && Process.uid != 0
+      puts "Cookbook #{id} requires elevated privileges. Please run converge command with sudo again."
+      return
+    end
+    command!(*arguments, **options)
+    puts "Converge cookbook #{id} from #{from}: Done"
+  end
+
+  private
+
+  def command(*arguments, **overrides)
+    options = {
+      cwd: location.to_s,
+      live_stdout: STDOUT,
+      live_stderr: STDERR
+    }
+
+    options.update(overrides)
+
+    Mixlib::ShellOut.new(*arguments.map(&:to_s), options).run_command
+  end
+
+  def command!(*arguments, **overrides)
+    command(*arguments, **overrides).error!
+  end
+end
+
+COOKBOOKS = [
+  Cookbook.new('machine.workstation.etki.me', true),
+  Cookbook.new('profile.workstation.etki.me')
+]
+
+
+def normalize_target(target)
+  result = TARGETS.select { |candidate| candidate.start_with?(target) }.first
+  raise "Unknown target #{target}" if result.nil?
+  result
+end
+
+class Application
+  # @!attribute
+  #   @return [Pathname]
+  attr_reader :project_directory
+  # @!attribute
+  #   @return [Array<Cookbook>]
+  attr_reader :cookbooks
+
+  # @param [Pathname] project_directory
+  # @param [Array<Cookbook>]
+  def initialize(project_directory, *cookbooks)
+    @project_directory = project_directory
+    @cookbooks = cookbooks
+  end
+
+  def with_cookbook(id, privileged = false)
+    cookbooks.push(Cookbook.new(project_directory.join('src').join(id), privileged))
+    self
+  end
+
+  def cookbook(name)
+    cookbooks
+      .select { |candidate| candidate.matches(name) }
+      .first
+  end
+
+  # @param [String] name
+  # @return [Cookbook]
+  def cookbook!(name)
+    target = cookbook(name)
+    raise "Unknown cookbook #{name}" if target.nil?
+    target
+  end
+
+  def install(*cookbooks)
+    cookbook_action(*cookbooks) do |cookbook|
+      cookbook.install
+    end
+  end
+
+  def export(*cookbooks)
+    cookbook_action(*cookbooks) do |cookbook|
+      cookbook.export(cookbook_workspace(cookbook))
+    end
+  end
+
+  def converge(*cookbooks)
+    cookbook_action(*cookbooks) do |cookbook|
+      cookbook.converge(cookbook_workspace(cookbook))
+    end
+  end
+
+  def apply(*cookbooks)
+    install(*cookbooks)
+    export(*cookbooks)
+    converge(*cookbooks)
+  end
+
+  private
+
+  # @param [Array<String>] cookbooks
+  # @param [Proc] action
+  def cookbook_action(*cookbooks, &action)
+    cookbooks
+      .map { |name| cookbook!(name) }
+      .each { |cookbook| action.call(cookbook) }
+  end
+
+  def cookbook_workspace(cookbook)
+    project_directory.join('workspace').join(cookbook.id)
+  end
+end
+
+application = Application.new(PROJECT_DIRECTORY)
+  .with_cookbook('machine.workstation.etki.me', true)
+  .with_cookbook('profile.workstation.etki.me')
+
+ACTIONS = %w[install export converge apply]
+
+arguments = ARGV
+action = arguments.shift
+
+unless ACTIONS.include?(action)
+  puts "Usage:"
+  puts "  #{$0} install [cookbook]: perform `chef install`"
+  puts "  #{$0} export [cookbook]: perform `chef export` in local workspace (requires install)"
+  puts "  #{$0} converge [cookbook]: converge system (requires export)"
+  puts "  #{$0} apply [cookbook]: Does all of the above"
+  puts
+  puts "[cookbook] may be empty or prefix of one of:"
+  application.cookbooks.each { |cookbook| puts " - #{cookbook.id}"}
+  exit(1)
+end
+
+cookbook_names = arguments
+if cookbook_names.empty?
+  cookbook_names = application.cookbooks.map(&:id).map(&:to_s)
+end
+
+application.send(action, *cookbook_names)

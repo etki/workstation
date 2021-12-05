@@ -6,7 +6,9 @@ I'm fed up with doing that by hand.
 ## How to blam
 
 - Install ChefDK / Chef Workstation.
-- Run `bin/workstation apply`.
+- `eval "$(chef shell-init <your shell>)"`
+- `bin/workstation apply`
+- `sudo bin/workstation converge machine`
 
 ## Is this legal?
 
