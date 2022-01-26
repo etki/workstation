@@ -24,7 +24,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+include_recipe 'profile.workstation.etki.me::arm'
 include_recipe 'profile.workstation.etki.me::setup'
+include_recipe 'profile.workstation.etki.me::ssh'
 
 remote_file '/tmp/postman.tar.gz' do
   source 'https://dl.pstmn.io/download/latest/linux64'
